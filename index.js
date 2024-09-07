@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { type } = require('express/lib/response');
+const { type, redirect } = require('express/lib/response');
 const app = express(),
   DB = require('mongoose'),
   parser = require('body-parser'),
@@ -36,57 +36,76 @@ const sample = DB.model("shortenedUrl", new DB.Schema({
 // middlewares
 const generateShorturl = async (req, res, next) => {
   req.original = await req.body.url;
-  let fil;
-  dns.lookup(req.original, (error, address, family) => {
+  try {
+    const urlname = new URL(req.original).hostname;
 
-    // if an error occurs, eg. the hostname is incorrect!
-    if (error) {
-      req.shorturl = 0;
-      console.error(error.message);
-    } else {
-      // if no error exists
-      const code = new Date().getTime();
-      req.shorturl = code;
-      console.log(
-        `The ip address is ${address} and the ip version is ${family}`
-      );
-    }
-  });
-
-  console.log(req.shorturl);
-  next();
+    dns.lookup(urlname, (error, address, family) => {
+      if (error) {
+        req.shorturl = 0;
+        console.error(error.message);
+        next();
+      }
+      else {
+        const code = new Date().getTime();
+        req.shorturl = code;
+        console.log(`link verified,\n IP : ${address}\nVersion : ${family}`);
+        next();
+      }
+    });
+  }
+  catch (error) {
+    req.shorturl = 0;
+    console.log(error);
+    next();
+  }
 }
 
 const saveShorturl = async (req, res, next) => {
   if (req.shorturl) {
-    const data = new sample({ originalUrl: req.original, shortUrl: req.shorturl });
+    const search = await sample.findOne({ originalUrl: req.original });
+    
+    if (!search) {
+      req.data = new sample({ originalUrl: req.original, shortUrl: req.shorturl });
 
-    data.save().then((r) => {
-      console.log("link saved!");
-    }).catch((err) => {
-      console.log(err);
-    });
-  }
-  else {
-    console.log("noon valid URL");
-  }
+      req.data.save().then((r) => {
+        console.log("link saved!");
+      }).catch((err) => {
+        console.log(err);
+      });
+    }
+    else {
+      req.data = search;
+    }
+  };
+  next();
+}
+
+const loadShorturl = async (req, res, next) => {
+  req.data = await sample.findOne({ shortUrl: req.params.urlcode }).exec();
   next();
 }
 
 /****************** */
 
-app.route("/api/shorturl").post(parser.urlencoded({ extended: true }),
+// API endpoints
+app.post("/api/shorturl", parser.urlencoded({ extended: true }),
   generateShorturl, saveShorturl, (req, res) => {
-    res.json(req.response);
-  })
-  .get((req, res) => {
-    res.send(req.shorturl);
-  })
+    if (!req.shorturl) {
+      res.json({ error: 'invalid url' });
+    }
+    else {
+      res.json(req.data);
+    }
+  });
+app.get("/api/shorturl/:urlcode", loadShorturl, (req, res) => {
+  res.redirect(req.data.originalUrl);
+})
 
 // Your first API endpoint
 app.get('/api/hello', function (req, res) {
   res.json({ greeting: 'hello API' });
 });
+/*********************** */
 
 app.listen(port, function () {
   console.log(`Listening on port ${port}`);
